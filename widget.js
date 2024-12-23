@@ -1,83 +1,124 @@
 class ProductSearchWidget {
     constructor(triggerInputId) {
+        console.log('[LOG:constructor] Initializing with triggerInputId:', triggerInputId);
         this.triggerInputId = triggerInputId;
+
+        // Эндпоинты
         this.apiUrl = 'https://smartsearch.spefix.com/api/search';
-        this.suggestionsUrl = 'https://smartsearch.spefix.com/api/search-suggestions';
+        this.suggestionsUrl = 'https://smartsearch.spefix.com/api/suggestions';
         this.correctionUrl = 'https://smartsearch.spefix.com/api/correct';
+        this.languageRoute = 'https://smartsearch.spefix.com/api/language';
+
+        // Состояние
         this.searchHistory = [];
         this.abortController = null;
         this.currentQuery = null;
-        this.requestId = 0;
-        this.siteDomain = window.location.pathname; // Получаем домен текущего сайта
+        this.siteDomain = window.location.pathname;
+        this.allProducts = [];
+        this.activeFilters = {};
+
+        // Сколько товаров показывать на вкладке «Всі результати» в каждой категории
+        this.maxItemsOnAllResults = 4;
+
+        // Тексты на нужном языке (упрощённый пример)
+        this.translationsMap = {
+            ru: {
+                searchPlaceholder: 'Поиск...',
+                allResults: 'Все результаты',
+                filters: 'Фильтры',
+                categories: 'Категории',
+                noProductsFound: 'Товаров не найдено.',
+                inStock: 'В наличии',
+                outOfStock: 'Нет в наличии',
+                startSearch: 'Начните поиск...',
+                more: 'Еще'
+            },
+            uk: {
+                searchPlaceholder: 'Пошук...',
+                allResults: 'Всі результати',
+                filters: 'Фільтри',
+                categories: 'Категорії',
+                noProductsFound: 'Товарів не знайдено',
+                inStock: 'В наявності',
+                outOfStock: 'Немає в наявності',
+                startSearch: 'Почніть пошук...',
+                more: 'Ще'
+            },
+            en: {
+                searchPlaceholder: 'Search...',
+                allResults: 'All results',
+                filters: 'Filters',
+                categories: 'Categories',
+                noProductsFound: 'No products found.',
+                inStock: 'In stock',
+                outOfStock: 'Out of stock',
+                startSearch: 'Start searching...',
+                more: 'More'
+            },
+            pl: {
+                searchPlaceholder: 'Szukaj...',
+                allResults: 'Wszystkie wyniki',
+                filters: 'Filtry',
+                categories: 'Kategorie',
+                noProductsFound: 'Nie znaleziono produktów.',
+                inStock: 'Dostępne',
+                outOfStock: 'Niedostępne',
+                startSearch: 'Rozpocznij wyszukiwanie...',
+                more: 'Więcej'
+            },
+            de: {
+                searchPlaceholder: 'Suche...',
+                allResults: 'Alle Ergebnisse',
+                filters: 'Filter',
+                categories: 'Kategorien',
+                noProductsFound: 'Keine Produkte gefunden.',
+                inStock: 'Auf Lager',
+                outOfStock: 'Nicht vorrätig',
+                startSearch: 'Beginnen Sie mit der Suche...',
+                more: 'Mehr'
+            }
+        };
+
         this.initWidget();
     }
 
-
-
     showHistory() {
         const historyList = document.querySelector('.widget-history-list');
-        if (historyList) {
-            historyList.classList.add('show');
-        }
+        if (historyList) historyList.classList.add('show');
     }
-
     hideHistory() {
         const historyList = document.querySelector('.widget-history-list');
-        if (historyList) {
-            historyList.classList.remove('show');
-        }
-    }
-
-    async loadJsCookieLibrary() {
-        if (window.Cookies) return; // Если библиотека уже загружена, ничего не делаем
-
-        return new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            script.src = 'https://cdn.jsdelivr.net/npm/js-cookie@3.0.5/dist/js.cookie.min.js';
-            script.type = 'text/javascript';
-            script.onload = () => resolve();
-            script.onerror = () => reject(new Error('Failed to load js-cookie library'));
-            document.head.appendChild(script);
-        });
-    }
-
-    async getOrCreateUserId() {
-        if (!window.Cookies) {
-            await this.loadJsCookieLibrary();
-        }
-
-        let userId = Cookies.get('userId');
-        if (!userId) {
-            // Генерация случайного числа с фиксированным количеством цифр
-            userId = Math.floor(Math.random() * 1e9).toString(); // Генерирует число от 0 до 999999999
-            Cookies.set('userId', userId, { expires: 365 });
-        }
-        this.userId = userId;
+        if (historyList) historyList.classList.remove('show');
     }
 
     async initWidget() {
-        console.log('Widget initialization started.');
+        console.log('[LOG:initWidget] Start.');
 
-        // Подключение HTML
-        const response = await fetch('https://aleklz89.github.io/widget/widget.html'); // Убедитесь, что путь корректен
-        const widgetHtml = await response.text();
+        // 1a) Сначала узнаём язык (используя siteDomain или любой path):
+        const userLang = await this.fetchInterfaceLanguage(this.siteDomain);
+        if (userLang) {
+            this.applyTranslations(userLang);
+        }
 
-        const widgetContainerWrapper = document.createElement('div');
-        widgetContainerWrapper.innerHTML = widgetHtml.trim();
-        const widgetContainer = widgetContainerWrapper.firstElementChild;
-        console.log('Widget container created:', widgetContainer);
-        document.body.appendChild(widgetContainer);
-        this.widgetContainer = widgetContainer;
-        console.log('Widget container appended to body.');
+        // 1) Загружаем HTML
+        //   const resp = await fetch('https://aleklz89.github.io/widget/widget.html');
+        const resp = await fetch('widget.html');
+        const widgetHtml = await resp.text();
 
-        // Добавление шрифта
+        // 2) Создаём DOM-элемент
+        const tmpDiv = document.createElement('div');
+        tmpDiv.innerHTML = widgetHtml.trim();
+        this.widgetContainer = tmpDiv.firstElementChild;
+        document.body.appendChild(this.widgetContainer);
+
+        // 3) Подключаем шрифты
         const fontLink = document.createElement('link');
-        fontLink.href = 'https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&display=swap';
         fontLink.rel = 'stylesheet';
+        fontLink.href = 'https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&display=swap';
         document.head.appendChild(fontLink);
 
-        // Подключение CSS
-        const stylesheets = [
+        // 4) Стили
+        const sheets = [
             'widget.css',
             'suggestion.css',
             'history.css',
@@ -85,663 +126,827 @@ class ProductSearchWidget {
             'container.css',
             'media.css'
         ];
-
-        stylesheets.forEach((stylesheet) => {
+        sheets.forEach((stylesheet) => {
             const link = document.createElement('link');
             link.rel = 'stylesheet';
-            link.href = `https://aleklz89.github.io/widget/${stylesheet}`;
+            // link.href = `https://aleklz89.github.io/widget/${stylesheet}`;
+            link.href = `${stylesheet}`;
             document.head.appendChild(link);
         });
 
-        const triggerInputs = document.querySelectorAll(`#${this.triggerInputId}`);
+        // Дополнительные стили для аккордеона и т.д.
+        const styleTag = document.createElement('style');
+        styleTag.textContent = `
+        .left-column {
+          display: flex;
+          flex-direction: column;
+          height: 100%;
+        }
+        /* Панель фильтров */
+        .filter-container {
+          background: #f9f9f9;
+          border: 1px solid #ddd;
+          margin-bottom: 10px;
+          height: 50%;
+          overflow-y: auto;
+          transition: height 0.3s ease;
+        }
+        .filter-container.collapsed {
+          height: 40px; 
+        }
+        .filter-toggle-btn {
+          background: #eee;
+          border: none;
+          width: 100%;
+          text-align: left;
+          padding: 8px;
+          cursor: pointer;
+          font-weight: bold;
+        }
+        .filter-content {
+          padding: 10px;
+        }
+        .filter-param-block {
+          margin-bottom: 12px;
+        }
+        .filter-checkbox-label {
+          display: block;
+          margin-bottom: 5px;
+        }
+  
+        /* Аккордеон категорий */
+        .category-accordion {
+          background: #f9f9f9;
+          border: 1px solid #ddd;
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+          transition: height 0.3s ease;
+        }
+        .category-accordion.collapsed {
+          height: 40px;
+        }
+        .category-accordion-header {
+          background: #eee;
+          padding: 8px;
+          font-weight: bold;
+          cursor: pointer;
+          border-bottom: 1px solid #ddd;
+          font-size: 13px;
+        }
+        .category-accordion-content {
+          overflow-y: auto;
+          flex: 1;
+        }
+  
+        /* Ограничение на вывод */
+        .product-container {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+        }
+        .more-link {
+          margin: 10px 0;
+          color: #007bff;
+          cursor: pointer;
+          font-weight: bold;
+        }
+      `;
+        document.head.appendChild(styleTag);
 
-        if (triggerInputs.length === 0) {
-            console.error(`Ни одного элемента с ID "${this.triggerInputId}" не найдено.`);
+        // 5) Ищем триггеры
+        const triggers = document.querySelectorAll(`#${this.triggerInputId}`);
+        if (!triggers.length) {
+            console.error('[LOG:initWidget] No triggers found');
+            return;
+        }
+        triggers.forEach((inp) => this.setupEventHandlers(this.widgetContainer, inp));
+
+        // 6) userId  история
+        await this.getOrCreateUserId();
+        await this.loadSearchHistory(this.userId);
+        this.updateSearchHistory();
+        this.addHistoryPopupHandlers();
+
+        // 7) Создаем панель фильтров  панель категорий
+        this.createFilterAccordion();
+        this.createCategoryAccordion();
+    }
+
+    createFilterAccordion() {
+        console.log('[LOG:createFilterAccordion] Inserting filter panel');
+        const filterContainer = document.createElement('div');
+        filterContainer.className = 'filter-container collapsed';
+
+        const toggleBtn = document.createElement('button');
+        toggleBtn.className = 'filter-toggle-btn';
+        toggleBtn.textContent = `${this.translations.filters} ▼`;
+        toggleBtn.addEventListener('click', () => {
+            filterContainer.classList.toggle('collapsed');
+            if (filterContainer.classList.contains('collapsed')) {
+                toggleBtn.textContent = `${this.translations.filters} ▼`;
+            } else {
+                toggleBtn.textContent = `${this.translations.filters} ▲`;
+            }
+        });
+
+        const filterContent = document.createElement('div');
+        filterContent.className = 'filter-content';
+
+        filterContainer.appendChild(toggleBtn);
+        filterContainer.appendChild(filterContent);
+
+        const leftCol = this.widgetContainer.querySelector('.left-column');
+        if (leftCol) {
+            leftCol.insertBefore(filterContainer, leftCol.querySelector('.categories-container'));
+            console.log('[LOG:createFilterAccordion] Filter panel inserted above .categories-container');
+        } else {
+            console.warn('[LOG:createFilterAccordion] .left-column not found.');
+            this.widgetContainer.insertBefore(filterContainer, this.widgetContainer.firstChild);
+        }
+    }
+
+    createCategoryAccordion() {
+        console.log('[LOG:createCategoryAccordion] Creating category accordion block...');
+
+        const leftCol = this.widgetContainer.querySelector('.left-column');
+        const catsContainer = this.widgetContainer.querySelector('.categories-container');
+        if (!leftCol || !catsContainer) {
+            console.warn('[LOG:createCategoryAccordion] No .left-column or .categories-container found.');
             return;
         }
 
-        triggerInputs.forEach((triggerInput) => {
-            // Привязываем обработчики для каждого найденного элемента
-            this.setupEventHandlers(this.widgetContainer, triggerInput);
+        const catAccordion = document.createElement('div');
+        catAccordion.className = 'category-accordion collapsed';
+
+        const catHeader = document.createElement('div');
+        catHeader.className = 'category-accordion-header';
+        catHeader.textContent = this.translations.categories;
+        catHeader.addEventListener('click', () => {
+            catAccordion.classList.toggle('collapsed');
+            if (catAccordion.classList.contains('collapsed')) {
+                catHeader.textContent = this.translations.categories;
+            } else {
+                catHeader.textContent = this.translations.categories;
+            }
         });
 
-        // Асинхронно получаем userId и историю
-        this.getOrCreateUserId().then(() => {
-            this.loadSearchHistory(this.userId).then(() => {
-                this.updateSearchHistory();
-                this.addHistoryPopupHandlers();
-                console.log('Search history:', this.searchHistory);
+        const catContent = document.createElement('div');
+        catContent.className = 'category-accordion-content';
+
+        catContent.appendChild(catsContainer);
+        catAccordion.appendChild(catHeader);
+        catAccordion.appendChild(catContent);
+
+        // Вставляем после filter-container
+        const filterCont = leftCol.querySelector('.filter-container');
+        if (filterCont) {
+            leftCol.insertBefore(catAccordion, filterCont.nextSibling);
+        } else {
+            leftCol.appendChild(catAccordion);
+        }
+    }
+
+    buildFilterMenu() {
+        console.log('[LOG:buildFilterMenu] Building filter checkboxes...');
+        const filterContainer = this.widgetContainer.querySelector('.filter-container');
+        const filterContent = filterContainer?.querySelector('.filter-content');
+        if (!filterContainer || !filterContent) {
+            console.warn('[LOG:buildFilterMenu] filterContainer or filterContent not found!');
+            return;
+        }
+
+        filterContent.innerHTML = '';
+
+        const filterData = {};
+        this.allProducts.forEach((prod) => {
+            if (!Array.isArray(prod.params)) return;
+            prod.params.forEach((p) => {
+                if (!filterData[p.name]) {
+                    filterData[p.name] = new Set();
+                }
+                filterData[p.name].add(p.value);
             });
+        });
+
+        Object.keys(filterData).forEach((paramName) => {
+            const paramBlock = document.createElement('div');
+            paramBlock.className = 'filter-param-block';
+
+            const titleEl = document.createElement('h4');
+            titleEl.textContent = paramName;
+            paramBlock.appendChild(titleEl);
+
+            const valArr = Array.from(filterData[paramName]);
+            valArr.forEach((val) => {
+                const label = document.createElement('label');
+                label.className = 'filter-checkbox-label';
+
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'filter-checkbox';
+                checkbox.value = val;
+
+                checkbox.addEventListener('change', () => {
+                    if (!this.activeFilters[paramName]) {
+                        this.activeFilters[paramName] = new Set();
+                    }
+                    if (checkbox.checked) {
+                        this.activeFilters[paramName].add(val);
+                    } else {
+                        this.activeFilters[paramName].delete(val);
+                        if (!this.activeFilters[paramName].size) {
+                            delete this.activeFilters[paramName];
+                        }
+                    }
+                    console.log('[LOG:buildFilterMenu] activeFilters=', this.activeFilters);
+
+                    const filtered = this.applyActiveFilters(this.allProducts);
+                    const cats = this.widgetContainer.querySelector('.categories-container');
+                    const res = this.widgetContainer.querySelector('.widget-result-container');
+                    this.displayProductsByCategory(filtered, cats, res);
+                });
+
+                const spanVal = document.createElement('span');
+                spanVal.textContent = val;
+
+                label.appendChild(checkbox);
+                label.appendChild(spanVal);
+                paramBlock.appendChild(label);
+            });
+
+            filterContent.appendChild(paramBlock);
+        });
+    }
+
+    applyActiveFilters(products) {
+        console.log('[LOG:applyActiveFilters] activeFilters=', this.activeFilters);
+        const keys = Object.keys(this.activeFilters);
+        if (!keys.length) return products;
+
+        return products.filter((prod) => {
+            for (const paramName of keys) {
+                const neededVals = this.activeFilters[paramName];
+                const found = prod.params?.find((p) => p.name === paramName);
+                if (!found) return false;
+                if (!neededVals.has(found.value)) return false;
+            }
+            return true;
         });
     }
 
     setupEventHandlers(widgetContainer, triggerInput) {
-        const searchInput = widgetContainer.querySelector('.widget-search-input');
-        const closeButton = widgetContainer.querySelector('.widget-close-button');
-        const categoriesContainer = widgetContainer.querySelector('.categories-container');
-        const resultContainer = widgetContainer.querySelector('.widget-result-container');
-        const suggestionsList = widgetContainer.querySelector('.widget-suggestions-list');
+        console.log('[LOG:setupEventHandlers]', triggerInput);
+        const sInput = widgetContainer.querySelector('.widget-search-input');
+        const cButton = widgetContainer.querySelector('.widget-close-button');
+        const catsCont = widgetContainer.querySelector('.categories-container');
+        const resCont = widgetContainer.querySelector('.widget-result-container');
+        const suggList = widgetContainer.querySelector('.widget-suggestions-list');
 
-        // Обработчик для закрытия виджета
-        closeButton.addEventListener('click', () => {
+        cButton.addEventListener('click', () => {
             widgetContainer.style.display = 'none';
         });
 
-        // Обработчик для открытия виджета
         triggerInput.addEventListener('focus', () => {
             widgetContainer.style.display = 'flex';
-            searchInput.focus();
-
-            const query = searchInput.value.trim();
-            if (query === '') {
-                this.showSearchHistory(); // Показываем историю запросов
-            } else {
-                this.hideSearchHistory(); // Скрываем историю, если есть текст
-            }
+            sInput.focus();
+            const q = sInput.value.trim();
+            if (!q) this.showHistory(); else this.hideHistory();
         });
 
-        searchInput.addEventListener('input', async (e) => {
-            const query = e.target.value.trim();
-            const requestToken = Symbol('requestToken');
-            this.currentRequestToken = requestToken;
+        sInput.addEventListener('input', async (e) => {
+            let query = e.target.value;
+            const reqToken = Symbol('requestToken');
+            this.currentRequestToken = reqToken;
 
-            if (query === '') {
-                this.showSearchHistory();
-                suggestionsList.style.display = 'none';
+            const last = query.slice(-1);
+            if (last === ' ') {
+                query = query.trimEnd();
+                await this.correctQuery(query, sInput);
+                query = sInput.value;
+                this.currentQuery = query;
+            }
+
+            if (!query.trim()) {
+                this.showHistory();
+                suggList.style.display = 'none';
                 return;
             } else {
-                this.hideSearchHistory();
+                this.hideHistory();
             }
 
-            this.currentQuery = query;
-
-            if (query.length < 1) {
-                suggestionsList.innerHTML = '';
-                suggestionsList.style.display = 'none';
-                return;
-            }
-
-            if (this.abortController) {
-                this.abortController.abort();
-            }
+            if (this.abortController) this.abortController.abort();
             this.abortController = new AbortController();
             const controller = this.abortController;
 
-            try {
-                await this.fetchSuggestions(query, suggestionsList, searchInput, requestToken, controller);
+            if (query.trim().length < 1) {
+                suggList.innerHTML = '';
+                suggList.style.display = 'none';
+                return;
+            }
 
-                if (query.length >= 3) {
-                    await this.fetchProducts(query, categoriesContainer, resultContainer, requestToken, controller);
+            try {
+                await this.fetchSuggestions(query.trim(), suggList, sInput, reqToken, controller);
+                if (query.trim().length >= 3) {
+                    await this.fetchProducts(query.trim(), catsCont, resCont, reqToken, controller);
                 } else {
-                    resultContainer.innerHTML = '<p>Почніть пошук...</p>';
-                    categoriesContainer.innerHTML = '';
+                    resCont.innerHTML = `<p>${this.translations.startSearch}</p>`;
+                    catsCont.innerHTML = '';
                 }
-            } catch (error) {
-                if (error.name === 'AbortError') {
-                    console.log('⏹️ Запрос был отменён.');
+            } catch (err) {
+                if (err.name === 'AbortError') {
+                    console.log('[LOG:setupEventHandlers] Request aborted.');
                 } else {
-                    console.error('Error during search input processing:', error);
-                    resultContainer.innerHTML = '<p>Виникла помилка під час пошуку.</p>';
-                    suggestionsList.innerHTML = '<p>Помилка отримання пропозицій</p>';
+                    console.error('[LOG:setupEventHandlers] Error:', err);
+                    resCont.innerHTML = `<p>${this.translations.errorWhileSearch || 'Error in search...'}</p>`;
+                    suggList.innerHTML = `<p>${this.translations.errorWhileSuggestions || 'Error in suggestions...'}</p>`;
                 }
             }
         });
 
-        // Скрываем подсказки при клике вне инпута или блока
-        document.addEventListener('click', (event) => {
-            if (suggestionsList && !suggestionsList.contains(event.target) && event.target !== searchInput) {
-                suggestionsList.style.display = 'none';
+        document.addEventListener('click', (evt) => {
+            if (suggList && !suggList.contains(evt.target) && evt.target !== sInput) {
+                suggList.style.display = 'none';
             }
         });
     }
 
+    async getOrCreateUserId() {
+        if (!window.Cookies) await this.loadJsCookieLibrary();
+        let userId = Cookies.get('userId');
+        if (!userId) {
+            userId = Math.floor(Math.random() * 1e9).toString();
+            Cookies.set('userId', userId, { expires: 365 });
+        }
+        this.userId = userId;
+        console.log('[LOG:getOrCreateUserId] userId=', userId);
+    }
+
+    async loadJsCookieLibrary() {
+        if (window.Cookies) return;
+        return new Promise((res, rej) => {
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/js-cookie@3.0.5/dist/js.cookie.min.js';
+            script.onload = () => res();
+            script.onerror = () => rej(new Error('Failed to load js-cookie'));
+            document.head.appendChild(script);
+        });
+    }
+
+    async loadSearchHistory(userId) {
+        console.log('[LOG:loadSearchHistory] userId=', userId);
+        if (!userId) return;
+        try {
+            const r = await fetch('https://smartsearch.spefix.com/api/get-user-query', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId }),
+            });
+            if (!r.ok) throw new Error(`HTTP error! status: ${r.status}`);
+            const data = await r.json();
+            this.searchHistory = data.history.map((x) => x.query).slice(-5);
+        } catch (err) {
+            console.error('[LOG:loadSearchHistory] Error:', err);
+        }
+    }
 
     updateSearchHistory() {
-        console.log('Обновляем историю запросов');
-        const historyContainer = document.querySelector('.widget-history-list');
-        historyContainer.style.display = 'block';
-        if (!historyContainer) return;
+        const hist = document.querySelector('.widget-history-list');
+        if (!hist) return;
 
-        // Очищаем контейнер перед обновлением
-        historyContainer.innerHTML = '';
-
-        if (this.searchHistory.length === 0) {
-            historyContainer.innerHTML = '<p></p>';
+        hist.innerHTML = '';
+        if (!this.searchHistory.length) {
+            hist.innerHTML = '<p></p>';
         } else {
-            this.searchHistory.forEach((query) => {
-                const historyItem = document.createElement('div');
-                historyItem.className = 'history-item';
-                historyItem.textContent = query;
-
-                // Обработчик клика по элементу истории
-                historyItem.addEventListener('click', () => {
-                    const searchInput = document.querySelector('.widget-search-input');
-                    searchInput.value = query;
-                    searchInput.dispatchEvent(new Event('input'));
+            this.searchHistory.forEach((q) => {
+                const item = document.createElement('div');
+                item.className = 'history-item';
+                item.textContent = q;
+                item.addEventListener('click', () => {
+                    const sIn = document.querySelector('.widget-search-input');
+                    sIn.value = q;
+                    sIn.dispatchEvent(new Event('input'));
                 });
-
-                historyContainer.appendChild(historyItem);
+                hist.appendChild(item);
             });
         }
     }
-
     addHistoryPopupHandlers() {
-        const searchInput = document.querySelector('.widget-search-input');
-        const historyContainer = document.querySelector('.widget-history-container');
-
-        if (!searchInput || !historyContainer) {
-            console.warn('Элементы для работы с историей не найдены.');
-            return;
-        }
-
-        // Показываем историю при фокусе
-        searchInput.addEventListener('focus', () => {
-            console.log('Фокус на инпуте, история запросов:', this.searchHistory);
-            if (this.searchHistory.length > 0) {
-                this.showHistory();
-            }
+        const sInp = document.querySelector('.widget-search-input');
+        const histC = document.querySelector('.widget-history-container');
+        if (!sInp || !histC) return;
+        sInp.addEventListener('focus', () => {
+            if (this.searchHistory.length) this.showHistory();
         });
-
-        // Закрываем историю при вводе текста
-        searchInput.addEventListener('input', (e) => {
-            const query = e.target.value.trim();
-            if (query.length > 0) {
+        sInp.addEventListener('input', (e) => {
+            const q = e.target.value.trim();
+            if (q.length > 0) {
                 this.hideHistory();
             } else {
                 this.showHistory();
             }
         });
     }
-
-
-
     showSearchHistory() {
-        console.log('Показываем окно с историей'); // Отладочный вывод
-        const historyContainer = document.querySelector('.widget-history-container');
-        const historyList = document.querySelector('.widget-history-list');
-        historyList.innerHTML = '';
-
-        if (this.searchHistory.length === 0) {
-            historyList.innerHTML = '<p></p>';
-        } else {
-            this.searchHistory.forEach((item) => {
-                const historyElement = document.createElement('div');
-                historyElement.className = 'history-item';
-                historyElement.textContent = item;
-
-                historyElement.addEventListener('click', () => {
-                    const searchInput = document.querySelector('.widget-search-input');
-                    searchInput.value = item;
-                    searchInput.dispatchEvent(new Event('input'));
-                });
-
-                historyList.appendChild(historyElement);
-            });
-        }
-
-        historyContainer.style.display = 'block'; // Отображаем контейнер истории
+        const c = document.querySelector('.widget-history-container');
+        if (c) c.style.display = 'block';
     }
-
     hideSearchHistory() {
-        const historyContainer = document.querySelector('.widget-history-container');
-        historyContainer.style.display = 'none';
-    }
-
-
-    async saveSearchQuery(query) {
-        if (!this.userId || !query) return;
-
-        try {
-            await fetch('https://smartsearch.spefix.com/api/addSearchQuery', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ userId: this.userId, query }),
-            });
-        } catch (error) {
-            console.error('Error saving search query:', error);
-        }
-    }
-
-    async loadSearchHistory(userId) {
-        if (!userId) {
-            console.error('User ID is missing! Cannot load search history.');
-            return;
-        }
-
-        console.log("Id пользователя: ", userId)
-
-        try {
-            const response = await fetch('https://smartsearch.spefix.com/api/get-user-query', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ userId }),
-            });
-
-            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-
-            const data = await response.json();
-            this.searchHistory = data.history.map((item) => item.query).slice(-5); // Последние 5 запросов
-            this.updateSearchHistory();
-        } catch (error) {
-            console.error('Error loading search history:', error);
-        }
-    }
-
-    updateSearchHistory() {
-        const historyContainer = document.querySelector('.widget-history-list');
-        if (!historyContainer) return;
-
-        // Очищаем контейнер перед обновлением
-        historyContainer.innerHTML = '';
-
-        if (this.searchHistory.length === 0) {
-            historyContainer.innerHTML = '<p></p>';
-        } else {
-            this.searchHistory.forEach((query) => {
-                const historyItem = document.createElement('div');
-                historyItem.className = 'history-item';
-                historyItem.textContent = query;
-
-                // Обработчик клика по элементу истории
-                historyItem.addEventListener('click', () => {
-                    const searchInput = document.querySelector('.widget-search-input');
-                    searchInput.value = query;
-                    searchInput.dispatchEvent(new Event('input'));
-                });
-
-                historyContainer.appendChild(historyItem);
-            });
-        }
-    }
-
-
-    async correctQuery(word, searchInput) {
-        try {
-            const response = await fetch(this.correctionUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ word }),
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-
-            const correctionResponse = await response.json();
-
-            if (
-                correctionResponse &&
-                correctionResponse.incorrectWord &&
-                correctionResponse.correctWord
-            ) {
-                const correctedQuery = searchInput.value
-                    .trim()
-                    .split(' ')
-                    .map((w) =>
-                        w.toLowerCase() === correctionResponse.incorrectWord.toLowerCase()
-                            ? correctionResponse.correctWord
-                            : w
-                    )
-                    .join(' ');
-
-                searchInput.value = correctedQuery;
-            }
-        } catch (error) {
-            console.error('Error correcting query:', error);
-        }
+        const c = document.querySelector('.widget-history-container');
+        if (c) c.style.display = 'none';
     }
 
     async fetchSuggestions(query, suggestionsList, searchInput, requestToken, controller) {
-        console.log('Fetching suggestions for query:', query);
-        const response = await fetch(this.suggestionsUrl, {
+        console.log('[LOG:fetchSuggestions] query=', query);
+        const r = await fetch(this.suggestionsUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                query,
-                domain: this.siteDomain // Добавляем домен
-            }),
+            body: JSON.stringify({ query, domain: this.siteDomain }),
             signal: controller.signal
         });
-
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-
-        const suggestions = await response.json();
-        console.log('Suggestions received:', suggestions);
-
-        // Проверяем, что этот токен соответствует последнему активному
+        if (!r.ok) throw new Error(`HTTP error! status: ${r.status}`);
+        const data = await r.json();
         if (requestToken !== this.currentRequestToken) {
-            console.log('Suggestions response outdated, ignoring.');
+            console.log('[LOG:fetchSuggestions] Outdated => ignoring');
             return;
         }
-
-        if (searchInput.value.trim() !== this.currentQuery) {
-            console.log('Query changed, skipping suggestions update.');
-            return;
+        let filtered = [];
+        if (Array.isArray(data)) {
+            filtered = data.filter((s) => s.word && s.word.trim().toLowerCase() !== query.trim().toLowerCase());
         }
-
-        suggestionsList.innerHTML = '';
-        if (Array.isArray(suggestions) && suggestions.length > 0) {
-            suggestions.forEach((suggestion) => {
-                if (!suggestion.word || typeof suggestion.word !== 'string') return;
-
-                const suggestionItem = document.createElement('div');
-                suggestionItem.className = 'suggestion-item';
-                const boldText = suggestion.word.replace(query, '');
-                suggestionItem.innerHTML = `<span>${query}</span><strong>${boldText}</strong>`;
-
-                suggestionItem.addEventListener('click', () => {
-                    console.log('Suggestion clicked:', suggestion.word);
-                    searchInput.value = suggestion.word;
-                    searchInput.dispatchEvent(new Event('input'));
-                });
-
-                suggestionsList.appendChild(suggestionItem);
-            });
-            suggestionsList.style.display = 'flex';
-        } else {
+        if (!filtered.length) {
             suggestionsList.style.display = 'none';
+            return;
+        }
+        suggestionsList.innerHTML = '';
+        filtered.forEach((sObj) => {
+            const item = document.createElement('div');
+            item.className = 'suggestion-item';
+            const boldText = sObj.word.replace(query, '');
+            item.innerHTML = `<span>${query}</span><strong>${boldText}</strong>`;
+            item.addEventListener('click', () => {
+                searchInput.value = sObj.word;
+                searchInput.dispatchEvent(new Event('input'));
+            });
+            suggestionsList.appendChild(item);
+        });
+        suggestionsList.style.display = 'flex';
+    }
+
+    async correctQuery(word, searchInput) {
+        console.log('[LOG:correctQuery] word=', word);
+        try {
+            const r = await fetch(this.correctionUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ word })
+            });
+            if (!r.ok) throw new Error(`HTTP error! status=${r.status}`);
+            const data = await r.json();
+            if (data && data.incorrectWord && data.correctWord) {
+                const corrected = searchInput.value
+                    .trim()
+                    .split(' ')
+                    .map((w) =>
+                        w.toLowerCase() === data.incorrectWord.toLowerCase() ? data.correctWord : w
+                    )
+                    .join(' ');
+                searchInput.value = corrected;
+                console.log('[LOG:correctQuery] corrected=', corrected);
+            }
+        } catch (err) {
+            console.error('[LOG:correctQuery] Error:', err);
         }
     }
 
     async fetchProducts(query, categoriesContainer, resultContainer, requestToken, controller) {
-        console.log(`[DEBUG] fetchProducts called with query="${query}"`);
-
-        const response = await fetch(this.apiUrl, {
+        console.log('[LOG:fetchProducts] query=', query);
+        const lang = navigator.language || 'en';
+        const r = await fetch(this.apiUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                word: query,
-                domain: this.siteDomain // Добавляем домен
-            }),
+            body: JSON.stringify({ word: query, domain: this.siteDomain, language: lang }),
             signal: controller.signal
         });
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const products = await response.json();
-        console.log(`[DEBUG] Products response for query="${query}":`, products);
-
-        // Проверяем токен
+        if (!r.ok) throw new Error(`HTTP error! status=${r.status}`);
+        const products = await r.json();
         if (requestToken !== this.currentRequestToken) {
-            console.log('[DEBUG] Products response outdated, ignoring.');
+            console.log('[LOG:fetchProducts] Outdated => ignoring');
             return;
         }
-
-        if (this.currentQuery !== query) {
-            console.log('[DEBUG] currentQuery changed, ignoring results.');
-            return;
-        }
-
         if (!Array.isArray(products)) {
-            console.log('[DEBUG] Products is not an array:', products);
+            console.log('[LOG:fetchProducts] Not array => ignoring');
             return;
         }
+        this.allProducts = products;
+        console.log('[LOG:fetchProducts] allProducts length=', products.length);
 
-        if (products.length === 0) {
-            console.log('[DEBUG] No products found');
-            resultContainer.innerHTML = '<p>No products found.</p>';
+        if (!products.length) {
+            resultContainer.innerHTML = `<p>${this.translations.noProductsFound}</p>`;
             categoriesContainer.innerHTML = '';
         } else {
-            console.log(`[DEBUG] Displaying ${products.length} products`);
-            this.displayProductsByCategory(products, categoriesContainer, resultContainer);
-        }
-
-        if (this.widgetContainer) {
-            const suggestionsList = this.widgetContainer.querySelector('.widget-suggestions-list');
-            if (suggestionsList) {
-                suggestionsList.innerHTML = '';
-                suggestionsList.style.display = 'none';
-                suggestionsList.classList.remove('show');
-            }
+            this.buildFilterMenu();
+            const filtered = this.applyActiveFilters(products);
+            this.displayProductsByCategory(filtered, categoriesContainer, resultContainer);
+            await this.saveSearchQuery(query);
+            await this.saveWordsToDatabase(query);
         }
     }
-
-
-    async saveWordsToDatabase(query) {
-        if (!query || typeof query !== 'string') return;
-
-        try {
-            await fetch('https://smartsearch.spefix.com/api/save-words', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: query }), // Отправляем введенную строку
-            });
-            console.log(`Запрос "${query}" успешно отправлен на /api/save-words.`);
-        } catch (error) {
-            console.error('Ошибка при сохранении строки:', error);
-        }
-    }
-
 
     displayProductsByCategory(products, categoriesContainer, resultContainer) {
-        console.log('[DEBUG] Entered displayProductsByCategory with products:', products);
+        console.log('[LOG:displayProductsByCategory] products.length=', products.length);
         categoriesContainer.innerHTML = '';
         resultContainer.innerHTML = '';
 
-        if (!Array.isArray(products) || products.length === 0) {
-            console.log('[DEBUG] No products to display.');
-            resultContainer.innerHTML = '<p>No products found.</p>';
+        if (!products.length) {
+            resultContainer.innerHTML = `<p>${this.translations.noProductsFound}</p>`;
             return;
         }
 
-        const categories = {};
-        const categoryCounts = {};
-
-        products.forEach((product) => {
-            product.categories.forEach((category) => {
-                if (!categories[category]) categories[category] = [];
-                categories[category].push(product);
-
-                if (!categoryCounts[category]) categoryCounts[category] = 0;
-                categoryCounts[category]++;
+        // 1) Группируем товары по категориям
+        const catMap = {};
+        products.forEach((p) => {
+            if (!p.categories) return;
+            p.categories.forEach((cat) => {
+                if (!catMap[cat]) catMap[cat] = [];
+                catMap[cat].push(p);
             });
         });
 
-        products.forEach((product) => {
-            let minCount = Infinity;
-            let primaryCategory = null;
-            product.categories.forEach((category) => {
-                if (categoryCounts[category] < minCount) {
-                    minCount = categoryCounts[category];
-                    primaryCategory = category;
-                }
+        // 2) Подсчитываем «очки» (score) для каждой категории
+        const categoryScores = {};
+        Object.entries(catMap).forEach(([catName, items]) => {
+            const inStock = items.filter((x) => x.availability);
+            const outStock = items.filter((x) => !x.availability);
+            const sortedItems = [...inStock, ...outStock];
+            const subset = sortedItems.slice(0, this.maxItemsOnAllResults);
+
+            let score = 0;
+            subset.forEach((prd) => {
+                if (prd.availability) score += 1;
+                else score -= 1;
             });
-            product.primaryCategory = primaryCategory;
+            categoryScores[catName] = score;
+            console.log(`[DEBUG-catScore] Category="${catName}", subset.length=${subset.length}, score=${score}`);
         });
 
-        const groupedProducts = {};
-        products.forEach((product) => {
-            const category = product.primaryCategory;
-            if (!groupedProducts[category]) groupedProducts[category] = [];
-            groupedProducts[category].push(product);
-        });
+        // 3) Собираем список категорий
+        const catNames = Object.keys(catMap);
 
-        const allResultsCategoryName = 'Всі результати';
-        const categoryNames = [allResultsCategoryName, ...Object.keys(categories)];
+        // 4) Сортируем catNames по убыванию score
+        catNames.sort((a, b) => (categoryScores[b] || 0) - (categoryScores[a] || 0));
 
-        categoryNames.forEach((categoryName) => {
-            // Создаем элемент для категории
-            const categoryItem = document.createElement('div');
-            categoryItem.className = 'category-item';
+        // 5) Вставляем «Всі результати» (или "Все результаты") в начало
+        const allResultsName = this.translations.allResults || 'Всі результати';
+        const finalCats = [allResultsName, ...catNames];
+        console.log('[DEBUG-catScore] Итоговый порядок категорий:', finalCats);
 
-            // Создаем текст для названия категории
-            const categoryText = document.createElement('span');
-            categoryText.className = 'category-name';
-            categoryText.textContent = categoryName;
+        // 6) Рендер категорий в порядке finalCats
+        finalCats.forEach((catName) => {
+            const cItem = document.createElement('div');
+            cItem.className = 'category-item';
 
-            // Создаем блок для количества товаров
-            const categoryCount = document.createElement('div');
-            categoryCount.className = 'category-count';
-            const productCount =
-                categoryName === allResultsCategoryName ? products.length : categories[categoryName].length;
-            categoryCount.textContent = productCount;
+            const cText = document.createElement('span');
+            cText.className = 'category-name';
+            cText.textContent = catName;
 
-            // Добавляем название категории и количество в контейнер
-            categoryItem.appendChild(categoryText);
-            categoryItem.appendChild(categoryCount);
-
-            // Добавляем обработчик клика
-            categoryItem.addEventListener('click', () => {
-                const categoryItems = categoriesContainer.getElementsByClassName('category-item');
-                Array.from(categoryItems).forEach((item) => item.classList.remove('active'));
-                categoryItem.classList.add('active');
-
-                if (categoryName === allResultsCategoryName) {
-                    this.showCategoryProducts(groupedProducts, resultContainer, true);
-                } else {
-                    const productsInCategory = categories[categoryName];
-                    this.showCategoryProducts({ [categoryName]: productsInCategory }, resultContainer, true, categoryName);
-                }
-            });
-
-            if (categoryName === allResultsCategoryName) {
-                categoryItem.classList.add('active');
+            const cCount = document.createElement('div');
+            cCount.className = 'category-count';
+            if (catName === allResultsName) {
+                cCount.textContent = products.length;
+            } else {
+                cCount.textContent = catMap[catName].length;
             }
 
-            categoriesContainer.appendChild(categoryItem);
+            cItem.appendChild(cText);
+            cItem.appendChild(cCount);
+
+            cItem.addEventListener('click', () => {
+                Array.from(categoriesContainer.getElementsByClassName('category-item'))
+                    .forEach((el) => el.classList.remove('active'));
+                cItem.classList.add('active');
+
+                if (catName === allResultsName) {
+                    this.showCategoryProducts(catMap, finalCats, resultContainer, true, null);
+                } else {
+                    const singleObj = { [catName]: catMap[catName] };
+                    this.showCategoryProducts(singleObj, [catName], resultContainer, true, catName);
+                }
+            });
+
+            if (catName === allResultsName) {
+                cItem.classList.add('active');
+            }
+            categoriesContainer.appendChild(cItem);
         });
 
-        this.showCategoryProducts(groupedProducts, resultContainer, true);
-        console.log('[DEBUG] Finished displayProductsByCategory rendering.');
+        // 7) Сразу показываем «Всі результати» 
+        this.showCategoryProducts(catMap, finalCats, resultContainer, true, null);
     }
 
-    async showCategoryProducts(groupedProducts, resultContainer, showCategoryTitles = true, selectedCategory = null) {
-        console.log('=== Start of showCategoryProducts ===');
-        console.log('Grouped Products:', groupedProducts);
-        console.log('Selected Category:', selectedCategory);
 
-        const isAllResults = selectedCategory === null;
-        console.log('Is All Results:', isAllResults);
-
-        // Устанавливаем количество товаров для отображения
-        const maxItemsToShow = isAllResults ? 4 : Number.MAX_SAFE_INTEGER;
-        console.log('Max Items to Show:', maxItemsToShow);
-
-        // Обновляем классы .widget-result-container
-        if (isAllResults) {
-            resultContainer.classList.add('all-results');
-        } else {
-            resultContainer.classList.remove('all-results');
-        }
+    async showCategoryProducts(
+        groupedProducts,
+        finalCategoryNames,  // это уже отсортированный список
+        resultContainer,
+        showTitles = true,
+        selectedCat = null
+    ) {
+        console.log('[LOG:showCategoryProducts] selectedCat=', selectedCat);
+        const isAllResults = (selectedCat === null);
 
         resultContainer.innerHTML = '';
 
-        // Загружаем HTML-шаблон для товаров
-        console.time('Loading Product Template');
-        const templateResponse = await fetch('https://aleklz89.github.io/widget/product-item.html'); // Проверьте путь
-        if (!templateResponse.ok) {
-            throw new Error(`Failed to load product template: ${templateResponse.status}`);
-        }
-        const productTemplate = await templateResponse.text();
-        console.timeEnd('Loading Product Template');
-        console.log('Product Template Loaded:', productTemplate);
+        // Грузим шаблон
+        const tResp = await fetch('https://aleklz89.github.io/widget/product-item.html');
+        if (!tResp.ok) throw new Error(`Failed to load product template: ${tResp.status}`);
+        const productTemplate = await tResp.text();
 
-        Object.entries(groupedProducts).forEach(([category, items]) => {
-            console.log(`Processing category: ${category}`);
-            console.log(`Items in category:`, items);
+        // Если мы в режиме «Всі результати»:
+        if (isAllResults) {
+            // ⚠️ Вместо Object.entries(...) используем finalCategoryNames (уже отсортированные).
+            // Скипаем сам "Всі результати" (т.е. finalCategoryNames[0]) и идём со 2-го элемента
+            // (или фильтруем его).
+            for (const catName of finalCategoryNames) {
+                // Пропускаем "Всі результати"
+                if (catName === this.translations.allResults) continue;
 
-            const isSingleCategory = Object.keys(groupedProducts).length === 1 && !selectedCategory;
-            console.log('Is Single Category:', isSingleCategory);
-
-            const categoryTitleHtml = (showCategoryTitles || selectedCategory)
-                ? `<h3><a href="#" class="category-link">${category} →</a></h3>`
-                : '';
-
-            const categoryBlock = document.createElement('div');
-            categoryBlock.className = `category-block ${isSingleCategory ? 'category-single' : 'category-multiple'}`;
-            if (categoryTitleHtml) {
-                categoryBlock.innerHTML = categoryTitleHtml;
+                const items = groupedProducts[catName] || [];
+                this.renderSingleCategoryBlock(
+                    catName,
+                    items,
+                    productTemplate,
+                    resultContainer,
+                    showTitles,
+                    null,
+                    this.maxItemsOnAllResults
+                );
             }
+        } else {
+            // Если кликаем по конкретной категории — рендерим только её (без лимита)
+            for (const catName of finalCategoryNames) {
+                const arr = groupedProducts[catName] || [];
+                this.renderSingleCategoryBlock(
+                    catName,
+                    arr,
+                    productTemplate,
+                    resultContainer,
+                    showTitles,
+                    selectedCat,
+                    Number.MAX_SAFE_INTEGER
+                );
+            }
+        }
+    }
 
-            const productContainer = document.createElement('div');
-            productContainer.className = 'product-container';
+    renderSingleCategoryBlock(catName, items, productTemplate, resultContainer, showTitles, selectedCat, limitCount) {
+        console.log('[LOG:renderSingleCategoryBlock] catName=', catName, 'items.length=', items.length);
+        const isSingle = !!selectedCat;
+        const categoryTitleHtml = (showTitles || selectedCat)
+            ? `<h3><a href="#" class="category-link">${catName} →</a></h3>`
+            : '';
 
-            // Добавляем товары
-            items.slice(0, maxItemsToShow).forEach((item) => {
-                console.log('Processing item:', item);
+        const catBlock = document.createElement('div');
+        catBlock.className = `category-block ${isSingle ? 'category-single' : 'category-multiple'}`;
+        if (categoryTitleHtml) {
+            catBlock.innerHTML = categoryTitleHtml;
+        }
 
-                const price = parseFloat(item.price) || 0;
-                const formattedPrice = price.toFixed(2);
+        const productContainer = document.createElement('div');
+        productContainer.className = 'product-container';
 
-                let productHtml = productTemplate
-                    .replace(/\{\{imageUrl\}\}/g, item.image || '')
-                    .replace(/\{\{name\}\}/g, item.name || 'No Name')
-                    .replace(/\{\{price\}\}/g, item.newPrice || 'Unavailable')
-                    .replace(/\{\{currencyId\}\}/g, item.currencyId || 'USD')
-                    .replace(/\{\{presence\}\}/g, item.availability ? 'В наявності' : 'Немає в наявності');
+        // Разделяем inStock / outOfStock
+        const inS = items.filter((p) => p.availability);
+        const outS = items.filter((p) => !p.availability);
+        const sorted = [...inS, ...outS];
 
-                console.log('Generated Product HTML:', productHtml);
+        // Обрезаем по limitCount
+        const subset = sorted.slice(0, limitCount);
 
-                const productElement = document.createElement('div');
-                productElement.innerHTML = productHtml.trim();
+        // Рисуем subset
+        subset.forEach((prod) => {
+            const presence = prod.availability ? this.translations.inStock : this.translations.outOfStock;
+            let pHtml = productTemplate
+                .replace(/\{\{imageUrl\}\}/g, prod.image || '')
+                .replace(/\{\{name\}\}/g, prod.name || 'No Name')
+                .replace(/\{\{price\}\}/g, prod.newPrice || 'Unavailable')
+                .replace(/\{\{currencyId\}\}/g, prod.currencyId || 'USD')
+                .replace(/\{\{presence\}\}/g, presence);
 
-                // Оборачиваем блок товара в ссылку или делаем его кликабельным
-                const productWrapper = document.createElement('a');
-                productWrapper.href = item.url || '#'; // Назначаем URL товара
-                productWrapper.target = '_blank'; // Открытие в новой вкладке (опционально)
-                productWrapper.className = 'product-link';
+            const el = document.createElement('div');
+            el.innerHTML = pHtml.trim();
 
-                productWrapper.appendChild(productElement.firstElementChild);
-                productContainer.appendChild(productWrapper);
+            const linkWrap = document.createElement('a');
+            linkWrap.href = prod.url || '#';
+            linkWrap.target = '_blank';
+            linkWrap.className = 'product-link';
+            if (!prod.availability) {
+                linkWrap.classList.add('out-of-stock');
+            }
+            linkWrap.appendChild(el.firstElementChild);
+            productContainer.appendChild(linkWrap);
+        });
+
+        // Если есть ещё товары сверх limitCount, показываем "Ще ..."
+        if (items.length > limitCount && !selectedCat) {
+            const moreDiv = document.createElement('div');
+            moreDiv.className = 'more-link';
+            moreDiv.textContent = `${this.translations.more} ${items.length - limitCount} ...`;
+            moreDiv.addEventListener('click', () => {
+                console.log('[LOG:renderSingleCategoryBlock] More clicked. catName=', catName);
+                // Показать всю категорию
+                const singleObj = { [catName]: sorted }; // все товары
+                this.showCategoryProducts(singleObj, [catName], resultContainer, true, catName);
+
+                // Подсветить категорию
+                this.activateCategory(catName);
             });
-
-            // Кнопка "ще", только во "Всі результати"
-            if (isAllResults && items.length > maxItemsToShow) {
-                const moreLink = document.createElement('div');
-                moreLink.className = 'more-link';
-                moreLink.textContent = `ще ${items.length - maxItemsToShow} ...`;
-
-                moreLink.addEventListener('click', () => {
-                    console.log(`More link clicked for category: ${category}`);
-                    this.showCategoryProducts({ [category]: items }, resultContainer, true, category);
-                    this.activateCategory(category);
-                });
-
-                productContainer.appendChild(moreLink);
-            }
-
-            categoryBlock.appendChild(productContainer);
-            resultContainer.appendChild(categoryBlock);
-        });
-
-        console.log('Final result container:', resultContainer.innerHTML);
-        console.log('=== End of showCategoryProducts ===');
-    }
-
-
-
-
-    async loadTemplate(templatePath) {
-        const response = await fetch(templatePath);
-        if (!response.ok) {
-            throw new Error(`Failed to load template: ${templatePath}`);
+            productContainer.appendChild(moreDiv);
         }
-        return await response.text();
+
+        catBlock.appendChild(productContainer);
+        resultContainer.appendChild(catBlock);
     }
 
-    activateCategory(categoryName) {
-        const categoriesContainer = document.querySelector('.categories-container');
-        const categoryItems = categoriesContainer.getElementsByClassName('category-item');
-
-        Array.from(categoryItems).forEach((item) => {
-            if (item.querySelector('.category-name').textContent === categoryName) {
-                item.classList.add('active');
+    activateCategory(catName) {
+        const catItems = this.widgetContainer.querySelectorAll('.category-item');
+        catItems.forEach((ci) => {
+            const text = ci.querySelector('.category-name');
+            if (text && text.textContent === catName) {
+                ci.classList.add('active');
             } else {
-                item.classList.remove('active');
+                ci.classList.remove('active');
             }
         });
     }
 
+    async fetchInterfaceLanguage(domainPath) {
+        try {
+            const resp = await fetch(this.languageRoute, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ domain: domainPath }),
+            });
+            if (!resp.ok) {
+                console.warn('[WARN] Language route not OK => use default...');
+                return null;
+            }
+            const data = await resp.json();
+            if (!data.success) {
+                console.warn('[WARN] Language route success=false => default...');
+                return null;
+            }
+            console.log('[DEBUG] language from route:', data.language);
+            return data.language || null;
+        } catch (err) {
+            console.error('[ERROR] fetchInterfaceLanguage:', err);
+            return null;
+        }
+    }
 
+    applyTranslations(langCode) {
+        if (this.translationsMap[langCode]) {
+            console.log('[DEBUG] Found translations for', langCode);
+            this.translations = this.translationsMap[langCode];
+        } else {
+            console.log('[DEBUG] No translations for', langCode, '=> keep default.');
+        }
+    }
+
+    async saveSearchQuery(query) {
+        if (!this.userId || !query) return;
+        try {
+            const resp = await fetch('https://smartsearch.spefix.com/api/addSearchQuery', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId: this.userId, query })
+            });
+            console.log('[LOG:saveSearchQuery] status=', resp.status);
+        } catch (err) {
+            console.error('[LOG:saveSearchQuery] Error:', err);
+        }
+    }
+
+    async saveWordsToDatabase(query) {
+        if (!query) return;
+        try {
+            const r = await fetch('https://smartsearch.spefix.com/api/save-words', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: query })
+            });
+            console.log('[LOG:saveWordsToDatabase] status=', r.status);
+        } catch (err) {
+            console.error('[LOG:saveWordsToDatabase] Error:', err);
+        }
+    }
 }
 
+// Запуск
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('[DEBUG] DOMContentLoaded event fired');
-
-    const triggerInputId = 'searchInput';
-    new ProductSearchWidget(triggerInputId);
+    console.log('[DEBUG] DOMContentLoaded');
+    new ProductSearchWidget('searchInput');
 });
