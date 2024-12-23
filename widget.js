@@ -770,8 +770,8 @@ class ProductSearchWidget {
         resultContainer.innerHTML = '';
 
         // Грузим шаблон
-        // const tResp = await fetch('https://aleklz89.github.io/widget/product-item.html');
-        const tResp = await fetch('product-item.html');
+        const tResp = await fetch('https://aleklz89.github.io/widget/product-item.html');
+        // const tResp = await fetch('product-item.html');
         if (!tResp.ok) throw new Error(`Failed to load product template: ${tResp.status}`);
         const productTemplate = await tResp.text();
 
