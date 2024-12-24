@@ -188,7 +188,7 @@ class ProductSearchWidget {
         this.createCategoryAccordion();
 
         this.createFilterAccordion();
-
+        
 
         this.adjustDefaultPanels();
     }
